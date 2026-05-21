@@ -1,0 +1,6 @@
+.env
+rclone-config/
+data/
+audio/
+logs/
+EOF
