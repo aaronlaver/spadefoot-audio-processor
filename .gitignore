@@ -3,4 +3,5 @@ rclone-config/
 data/
 audio/
 logs/
-EOF
+analyzer-cache/
+results/

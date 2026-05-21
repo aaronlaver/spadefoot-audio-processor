@@ -27,3 +27,12 @@ services:
       - ./rclone-config:/config/rclone
       - ./audio:/audio
       - ./data:/data
+  analyzer:
+      build: ./analyzer
+      container_name: birdnet-analyzer
+      restart: "no"
+      volumes:
+        - ./audio:/audio
+        - ./results:/results
+        - ./analyzer-cache:/usr/local/lib/python3.11/site-packages/birdnet_analyzer/checkpoints
+        - ./custom_scripts:/custom_scripts
