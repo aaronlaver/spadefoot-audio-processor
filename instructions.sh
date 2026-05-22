@@ -12,13 +12,12 @@ docker exec -it birdnet-tools rclone config
 
 # n — new remote
 # Name: wasabi
-# Storage: 4 (s3)
-# Provider: 48 (Wasabi)
+# Storage: 5 (backblaze)
 # 1 (next step credentials, then...)
-# Access key: DIISSWY01DX4BS6J3L1J
-# secret key: 66ut7zvCSWVwBLAZCtecQvLW3leRyyLjoTmjvNVE
-# Region: us-east-2
-# Endpoint: s3.us-east-2.wasabisys.com
+#B2_ACCESS_KEY=005581ae08ceb7b0000000001
+#B2_SECRET_KEY=K005gBKw5lYX3BkVOdjwQhcOHGQhgbQ
+#B2_REGION=us-east-005
+#B2_ENDPOINT=s3.us-east-005.backblazeb2.com
 # Default everything else, n to advanced, y to confirm
 
 ################### TESTING START ###############

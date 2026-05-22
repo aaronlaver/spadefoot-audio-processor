@@ -18,11 +18,11 @@ services:
     entrypoint: tail -f /dev/null
     env_file: .env
     environment:
-      - RCLONE_S3_ACCESS_KEY_ID=${WASABI_ACCESS_KEY}
-      - RCLONE_S3_SECRET_ACCESS_KEY=${WASABI_SECRET_KEY}
-      - RCLONE_S3_REGION=${WASABI_REGION}
-      - RCLONE_S3_ENDPOINT=${WASABI_ENDPOINT}
-      - RCLONE_S3_PROVIDER=Wasabi
+      - RCLONE_S3_ACCESS_KEY_ID=${B2_ACCESS_KEY}
+      - RCLONE_S3_SECRET_ACCESS_KEY=${B2_SECRET_KEY}
+      - RCLONE_S3_REGION=${B2_REGION}
+      - RCLONE_S3_ENDPOINT=${B2_ENDPOINT}
+      - RCLONE_S3_PROVIDER=Other
     volumes:
       - ./rclone-config:/config/rclone
       - ./audio:/audio

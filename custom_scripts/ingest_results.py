@@ -93,7 +93,7 @@ for result_file in result_files:
         conn.commit()
 
     # ── Ensure media entry exists ─────────────────────────────────────────────
-    opus_url = f"https://s3.us-east-2.wasabisys.com/spadefoot/spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
+    opus_url = f"https://s3.us-east-005.backblazeb2.com/spadefoot/spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
     media_key = f"spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
 
     cur.execute("SELECT media_id FROM core.media WHERE media_url = %s", (opus_url,))
