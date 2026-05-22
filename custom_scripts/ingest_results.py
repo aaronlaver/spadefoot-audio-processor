@@ -5,13 +5,23 @@ import csv
 import uuid
 import psycopg2
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 
 RESULTS_DIR = "/results"
 DEVICE_NAME = "spadefoot-1"
 LAT = 40.1259
 LON = -82.9071
 CREATED_BY = "spadefoot"
+
+# ── Build common name → scientific name lookup ────────────────────────────────
+LABELS_FILE = "/usr/local/lib/python3.11/site-packages/birdnet_analyzer/labels/V2.4/BirdNET_GLOBAL_6K_V2.4_Labels_en_uk.txt"
+common_to_scientific = {}
+with open(LABELS_FILE, "r") as f:
+    for line in f:
+        line = line.strip()
+        if "_" in line:
+            sci, common = line.split("_", 1)
+            common_to_scientific[common.lower()] = sci
 
 conn = psycopg2.connect(
     host=os.environ["PG_HOST"],
@@ -31,7 +41,7 @@ else:
     unit_id = str(uuid.uuid4())
     cur.execute("""
         INSERT INTO core.devices (unit_id, unit_name, device_type, created_by)
-        VALUES (%s, %s, 'acoustic_monitor', %s)
+        VALUES (%s, %s, 'acoustic_recorder', %s)
     """, (unit_id, DEVICE_NAME, CREATED_BY))
     conn.commit()
     print(f"Registered device {DEVICE_NAME} as {unit_id}")
@@ -46,13 +56,12 @@ for result_file in result_files:
         print(f"Skipping (already ingested): {result_file.name}")
         continue
 
-    # Parse filename: spadefoot-1_YYYYMMDD_HHMMSS_type
     stem = result_file.stem.replace(".BirdNET.selection.table", "")
     parts = stem.split("_")
     try:
-        date_str = parts[1]   # 20260517
-        time_str = parts[2]   # 204200
-        rec_type = parts[3]   # dusk / hourly / dawn
+        date_str = parts[1]
+        time_str = parts[2]
+        rec_type = parts[3]
         recorded_at = datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
     except (IndexError, ValueError) as e:
         print(f"Could not parse filename {result_file.name}: {e}")
@@ -84,7 +93,9 @@ for result_file in result_files:
         conn.commit()
 
     # ── Ensure media entry exists ─────────────────────────────────────────────
-    opus_url = f"wasabi:spadefoot/spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
+    opus_url = f"https://s3.us-east-2.wasabisys.com/spadefoot/spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
+    media_key = f"spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
+
     cur.execute("SELECT media_id FROM core.media WHERE media_url = %s", (opus_url,))
     row = cur.fetchone()
 
@@ -94,9 +105,9 @@ for result_file in result_files:
         media_id = str(uuid.uuid4())
         cur.execute("""
             INSERT INTO core.media
-                (media_id, activity_id, media_url, media_type, media_use, created_by)
-            VALUES (%s, %s, %s, 'audio', 'source', %s)
-        """, (media_id, activity_id, opus_url, CREATED_BY))
+                (media_id, activity_id, media_url, media_key, media_type, media_use, created_by)
+            VALUES (%s, %s, %s, %s, 'audio', 'source', %s)
+        """, (media_id, activity_id, opus_url, media_key, CREATED_BY))
         conn.commit()
 
     # ── Insert observations ───────────────────────────────────────────────────
@@ -105,29 +116,34 @@ for result_file in result_files:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             common_name = row.get("Common Name", "").strip()
-            scientific_name = row.get("Species Code", "").strip()
+            common_name_lower = common_name.lower()
+            scientific_name = common_to_scientific.get(common_name_lower, "")
             confidence = float(row.get("Confidence", 0))
             offset_s = float(row.get("Begin Time (s)", 0))
 
-            if common_name.lower() == "nocall":
+            if common_name_lower == "nocall":
                 continue
 
+            detected_at = recorded_at + timedelta(seconds=offset_s)
             observation_id = str(uuid.uuid4())
+
             cur.execute("""
                 INSERT INTO core.observations
                     (observation_id, activity_id, media_id, media_offset,
                      machine_common_name, machine_scientific_name,
                      machine_confidence, mode_of_entry, mode_of_identification,
-                     geom, created_by)
+                     detected_at, geom, created_by)
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s,
                     'automated', 'machine',
+                    %s,
                     ST_SetSRID(ST_MakePoint(%s, %s), 4326),
                     %s
                 )
             """, (
                 observation_id, activity_id, media_id, offset_s,
                 common_name, scientific_name, confidence,
+                detected_at,
                 LON, LAT,
                 CREATED_BY
             ))

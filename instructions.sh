@@ -56,10 +56,13 @@ chmod +x ~/birdnet/custom_scripts/process_all.sh
 
 docker compose down
 docker compose up -d
-# Start screen session and kick off processing
+# Start screen session and kick off bulk processing
 screen -S birdnet
 ~/birdnet/custom_scripts/process_all.sh
 # Detach: Ctrl+A then D
 
-# Reattach later
-screen -r birdnet
+# Add observations to postgres:
+docker compose run --rm -T analyzer python /custom_scripts/ingest_results.py
+
+# If you need to wipe already ingested flags:
+# find ~/birdnet/results -name "*.ingested" -delete

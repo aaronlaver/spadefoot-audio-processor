@@ -31,6 +31,7 @@ services:
       build: ./analyzer
       container_name: birdnet-analyzer
       restart: "no"
+      env_file: .env
       volumes:
         - ./audio:/audio
         - ./results:/results
