@@ -65,3 +65,14 @@ docker compose run --rm -T analyzer python /custom_scripts/ingest_results.py
 
 # If you need to wipe already ingested flags:
 # find ~/birdnet/results -name "*.ingested" -delete
+
+# Finally, set up the daily script. 
+mkdir -p ~/birdnet/logs
+chmod +x ~/birdnet/custom_scripts/daily_run.sh
+
+crontab -e 
+# paste this line in:
+0 14 * * * /home/geoace/birdnet/custom_scripts/daily_run.sh
+
+# Test
+~/birdnet/custom_scripts/daily_run.sh
