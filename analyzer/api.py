@@ -10,6 +10,9 @@ import psycopg2
 from pathlib import Path
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
+import urllib.request
+import urllib.parse
+import json as json_lib
 
 app = Flask(__name__)
 
@@ -150,6 +153,133 @@ def ingest(result_file, conn, cur):
     result_file.with_suffix(".ingested").touch()
     return observations_inserted
 
+def fetch_gbif(scientific_name):
+    try:
+        url = f"https://api.gbif.org/v1/species/match?name={urllib.parse.quote(scientific_name)}&verbose=false"
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json_lib.loads(r.read())
+        if data.get("matchType") == "NONE":
+            return None
+        return {
+            "gbif_taxon_key": data.get("usageKey") or data.get("speciesKey"),
+            "scientific_name": data.get("species") or data.get("canonicalName"),
+            "kingdom": data.get("kingdom"),
+            "phylum": data.get("phylum"),
+            "class": data.get("class"),
+            "order": data.get("order"),
+            "family": data.get("family"),
+            "common_name": data.get("canonicalName") or scientific_name,
+        }
+    except:
+        return None
+
+def fetch_wikipedia_image(scientific_name, common_name):
+    for q in [common_name, scientific_name]:
+        if not q:
+            continue
+        try:
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(q)}"
+            with urllib.request.urlopen(url, timeout=5) as r:
+                data = json_lib.loads(r.read())
+            thumb = data.get("thumbnail", {})
+            if thumb.get("source"):
+                return {
+                    "image_url": thumb["source"],
+                    "image_attribution": data.get("content_urls", {}).get("desktop", {}).get("page")
+                }
+        except:
+            continue
+    return None
+
+def fetch_inat_image(scientific_name, common_name):
+    for q in [scientific_name, common_name]:
+        if not q:
+            continue
+        try:
+            url = f"https://api.inaturalist.org/v1/taxa?q={urllib.parse.quote(q)}&per_page=1&photos=true"
+            with urllib.request.urlopen(url, timeout=5) as r:
+                data = json_lib.loads(r.read())
+            taxon = (data.get("results") or [None])[0]
+            if not taxon:
+                continue
+            photo = taxon.get("default_photo", {})
+            if photo.get("medium_url"):
+                return {
+                    "image_url": photo["medium_url"],
+                    "image_attribution": f"© {photo.get('attribution', 'iNaturalist contributors')} via iNaturalist"
+                }
+        except:
+            continue
+    return None
+
+def enrich_species(cur, conn, scientific_name, common_name):
+    lookup = scientific_name or common_name
+    cur.execute("""
+        SELECT gbif_fetched_at FROM core.species
+        WHERE scientific_name = %s OR (scientific_name = '' AND common_name = %s)
+    """, (lookup, common_name))
+    row = cur.fetchone()
+    if row and row[0]:
+        return
+
+    gbif = fetch_gbif(scientific_name) if scientific_name else None
+    image = fetch_wikipedia_image(scientific_name, common_name) or \
+            fetch_inat_image(scientific_name, common_name) or \
+            {"image_url": None, "image_attribution": None}
+
+    sci = scientific_name if scientific_name else (gbif or {}).get("scientific_name") or common_name
+    common = common_name or (gbif or {}).get("common_name") or scientific_name
+
+    cur.execute("""
+        INSERT INTO core.species (
+            scientific_name, common_name, gbif_taxon_key,
+            kingdom, phylum, class, "order", family,
+            image_url, image_attribution, gbif_fetched_at
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+        ON CONFLICT (scientific_name) DO UPDATE SET
+            common_name = EXCLUDED.common_name,
+            gbif_taxon_key = EXCLUDED.gbif_taxon_key,
+            kingdom = EXCLUDED.kingdom,
+            phylum = EXCLUDED.phylum,
+            class = EXCLUDED.class,
+            "order" = EXCLUDED."order",
+            family = EXCLUDED.family,
+            image_url = EXCLUDED.image_url,
+            image_attribution = EXCLUDED.image_attribution,
+            gbif_fetched_at = NOW()
+    """, (
+        sci, common,
+        (gbif or {}).get("gbif_taxon_key"),
+        (gbif or {}).get("kingdom"),
+        (gbif or {}).get("phylum"),
+        (gbif or {}).get("class"),
+        (gbif or {}).get("order"),
+        (gbif or {}).get("family"),
+        image["image_url"],
+        image["image_attribution"]
+    ))
+    conn.commit()
+    print(f"Enriched: {sci}")
+
+def enrich_all(cur, conn):
+    cur.execute("""
+        SELECT DISTINCT
+            COALESCE(machine_scientific_name, '') AS machine_scientific_name,
+            machine_common_name
+        FROM core.observations
+        WHERE machine_common_name IS NOT NULL
+            AND machine_common_name NOT IN (
+                SELECT common_name FROM core.species WHERE gbif_fetched_at IS NOT NULL
+            )
+    """)
+    rows = cur.fetchall()
+    print(f"Enriching {len(rows)} new species...")
+    for row in rows:
+        enrich_species(cur, conn, row[0], row[1])
+        import time
+        time.sleep(0.2)
+    print(f"Enrichment complete.")
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
@@ -218,17 +348,21 @@ def process():
     print(f"Ingesting: {relative}")
     observations = ingest(result_check, conn, cur)
 
+    # ── Enrich new species ────────────────────────────────────────────────────
+    print(f"Enriching species...")
+    enrich_all(cur, conn)
+
     # ── Cleanup ───────────────────────────────────────────────────────────────
     os.remove(wav_file)
     cur.close()
     conn.close()
 
     print(f"Done: {relative} — {observations} observations")
+    
     return jsonify({
         "status": "ok",
         "file": object_name,
         "observations": observations
     }), 200
-
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
