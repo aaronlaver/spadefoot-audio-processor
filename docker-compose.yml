@@ -37,3 +37,16 @@ services:
         - ./results:/results
         - ./analyzer-cache:/usr/local/lib/python3.11/site-packages/birdnet_analyzer/checkpoints
         - ./custom_scripts:/custom_scripts
+
+  receiver:
+    build: ./receiver
+    container_name: birdnet-receiver
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file: .env
+    volumes:
+      - ./custom_scripts:/custom_scripts
+      - ./audio:/audio
+      - ./results:/results
+      - /var/run/docker.sock:/var/run/docker.sock

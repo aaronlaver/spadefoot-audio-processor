@@ -8,10 +8,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 RESULTS_DIR = "/results"
-DEVICE_NAME = "spadefoot-1"
-LAT = 40.1259
-LON = -82.9071
+INBOX_DIR = "/audio/inbox"
 CREATED_BY = "spadefoot"
+AUDIO_EXTENSIONS = ["opus", "flac", "wav", "mp3", "m4a", "ogg", "aac"]
 
 # ── Build common name → scientific name lookup ────────────────────────────────
 LABELS_FILE = "/usr/local/lib/python3.11/site-packages/birdnet_analyzer/labels/V2.4/BirdNET_GLOBAL_6K_V2.4_Labels_en_uk.txt"
@@ -32,19 +31,35 @@ conn = psycopg2.connect(
 )
 cur = conn.cursor()
 
-# ── Ensure device exists ──────────────────────────────────────────────────────
-cur.execute("SELECT unit_id FROM core.devices WHERE unit_name = %s", (DEVICE_NAME,))
-row = cur.fetchone()
-if row:
-    unit_id = row[0]
-else:
-    unit_id = str(uuid.uuid4())
+# ── Cache device lookups ──────────────────────────────────────────────────────
+device_cache = {}
+
+def get_device(device_name):
+    if device_name in device_cache:
+        return device_cache[device_name]
+
     cur.execute("""
-        INSERT INTO core.devices (unit_id, unit_name, device_type, created_by)
-        VALUES (%s, %s, 'acoustic_recorder', %s)
-    """, (unit_id, DEVICE_NAME, CREATED_BY))
-    conn.commit()
-    print(f"Registered device {DEVICE_NAME} as {unit_id}")
+        SELECT unit_id, ST_X(geom::geometry), ST_Y(geom::geometry)
+        FROM core.devices WHERE unit_name = %s
+    """, (device_name,))
+    row = cur.fetchone()
+
+    if row:
+        unit_id, lon, lat = row
+    else:
+        unit_id = str(uuid.uuid4())
+        lon, lat = -82.9071, 40.1259
+        cur.execute("""
+            INSERT INTO core.devices
+                (unit_id, unit_name, device_type, created_by, geom)
+            VALUES (%s, %s, 'acoustic_recorder', %s,
+                ST_SetSRID(ST_MakePoint(%s, %s), 4326))
+        """, (unit_id, device_name, CREATED_BY, lon, lat))
+        conn.commit()
+        print(f"Registered device {device_name} as {unit_id}")
+
+    device_cache[device_name] = (unit_id, lon, lat)
+    return unit_id, lon, lat
 
 # ── Process result files ──────────────────────────────────────────────────────
 result_files = sorted(Path(RESULTS_DIR).rglob("*.BirdNET.selection.table.txt"))
@@ -59,6 +74,7 @@ for result_file in result_files:
     stem = result_file.stem.replace(".BirdNET.selection.table", "")
     parts = stem.split("_")
     try:
+        device_name = parts[0]
         date_str = parts[1]
         time_str = parts[2]
         rec_type = parts[3]
@@ -66,6 +82,17 @@ for result_file in result_files:
     except (IndexError, ValueError) as e:
         print(f"Could not parse filename {result_file.name}: {e}")
         continue
+
+    unit_id, LON, LAT = get_device(device_name)
+
+    # ── Derive source file extension ──────────────────────────────────────────
+    date_folder = recorded_at.strftime('%Y-%m-%d')
+    source_ext = "opus"
+    for ext in AUDIO_EXTENSIONS:
+        candidate = f"{INBOX_DIR}/{device_name}/{date_folder}/{stem}.{ext}"
+        if os.path.exists(candidate):
+            source_ext = ext
+            break
 
     # ── Ensure activity_log entry exists ─────────────────────────────────────
     cur.execute("""
@@ -93,10 +120,10 @@ for result_file in result_files:
         conn.commit()
 
     # ── Ensure media entry exists ─────────────────────────────────────────────
-    opus_url = f"https://s3.us-east-005.backblazeb2.com/spadefoot/spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
-    media_key = f"spadefoot-1/{recorded_at.strftime('%Y-%m-%d')}/{stem}.opus"
+    media_url = f"https://s3.us-east-005.backblazeb2.com/spadefoot/{device_name}/{date_folder}/{stem}.{source_ext}"
+    media_key = f"{device_name}/{date_folder}/{stem}.{source_ext}"
 
-    cur.execute("SELECT media_id FROM core.media WHERE media_url = %s", (opus_url,))
+    cur.execute("SELECT media_id FROM core.media WHERE media_url = %s", (media_url,))
     row = cur.fetchone()
 
     if row:
@@ -107,7 +134,7 @@ for result_file in result_files:
             INSERT INTO core.media
                 (media_id, activity_id, media_url, media_key, media_type, media_use, created_by)
             VALUES (%s, %s, %s, %s, 'audio', 'source', %s)
-        """, (media_id, activity_id, opus_url, media_key, CREATED_BY))
+        """, (media_id, activity_id, media_url, media_key, CREATED_BY))
         conn.commit()
 
     # ── Insert observations ───────────────────────────────────────────────────

@@ -76,3 +76,48 @@ crontab -e
 
 # Test
 ~/birdnet/custom_scripts/daily_run.sh
+
+# Set up networking for B2 communication via cloudflare
+# Install cloudflared on geoace-2
+curl -L https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update && sudo apt install cloudflared -y
+cloudflared tunnel login
+cloudflared tunnel create spadefoot-analyzer # Copy the .json path for use below
+
+nano ~/.cloudflared/config.yml
+
+# Then Paste this in:
+# START FILE
+tunnel: 1d2b3fa6-47a9-4752-a507-ce8e53ed8bf1
+credentials-file: /home/geoace/.cloudflared/1d2b3fa6-47a9-4752-a507-ce8e53ed8bf1.json # put path here a
+
+ingress:
+  - hostname: analyze.habitrax.net # change as appropriate
+    service: http://localhost:5000
+  - service: http_status:404
+
+# END FILE
+
+cloudflared tunnel route dns spadefoot-analyzer analyze.habitrax.net
+
+# Install as a service so it survives reboots
+sudo mkdir -p /etc/cloudflared
+sudo cp ~/.cloudflared/config.yml /etc/cloudflared/
+sudo cp ~/.cloudflared/1d2b3fa6-47a9-4752-a507-ce8e53ed8bf1.json /etc/cloudflared/
+
+sudo cloudflared service install
+sudo systemctl enable cloudflared
+sudo systemctl start cloudflared
+sudo systemctl status cloudflared
+
+# Set up flask receiver
+mkdir -p ~/birdnet/receiver
+
+# Fill out B2 Webhook Secret Env variable, then...
+docker compose up -d --build receiver
+
+docker ps # check to make sure it's working
+
+curl -s https://analyze.habitrax.net/health
+# should get: {"status":"ok"}
