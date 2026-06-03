@@ -1,52 +1,27 @@
 services:
-  birdnet-go:
-    image: ghcr.io/tphakala/birdnet-go:latest
-    container_name: birdnet-go
-    restart: unless-stopped
-    ports:
-      - "8081:8080"
-    env_file: .env
-    volumes:
-      - ./config:/config
-      - ./data:/data
-      - ./audio:/audio
-
-  tools:
-    build: ./tools
-    container_name: birdnet-tools
-    restart: unless-stopped
-    entrypoint: tail -f /dev/null
-    env_file: .env
-    environment:
-      - RCLONE_S3_ACCESS_KEY_ID=${B2_ACCESS_KEY}
-      - RCLONE_S3_SECRET_ACCESS_KEY=${B2_SECRET_KEY}
-      - RCLONE_S3_REGION=${B2_REGION}
-      - RCLONE_S3_ENDPOINT=${B2_ENDPOINT}
-      - RCLONE_S3_PROVIDER=Other
-    volumes:
-      - ./rclone-config:/config/rclone
-      - ./audio:/audio
-      - ./data:/data
   analyzer:
-      build: ./analyzer
-      container_name: birdnet-analyzer
-      restart: "no"
-      env_file: .env
-      volumes:
-        - ./audio:/audio
-        - ./results:/results
-        - ./analyzer-cache:/usr/local/lib/python3.11/site-packages/birdnet_analyzer/checkpoints
-        - ./custom_scripts:/custom_scripts
+    build: ./analyzer
+    container_name: birdnet-analyzer
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./audio:/audio
+      - ./results:/results
+      - ./rclone-config:/config/rclone
+      - ./analyzer-cache:/usr/local/lib/python3.11/site-packages/birdnet_analyzer/checkpoints
+      - ./custom_scripts:/custom_scripts
+      - ./logs:/logs
 
   receiver:
     build: ./receiver
     container_name: birdnet-receiver
     restart: unless-stopped
+    env_file: .env
     ports:
       - "5000:5000"
-    env_file: .env
     volumes:
-      - ./custom_scripts:/custom_scripts
-      - ./audio:/audio
-      - ./results:/results
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./logs:/logs
+    depends_on:
+      - analyzer

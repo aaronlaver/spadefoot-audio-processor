@@ -1,7 +1,6 @@
 .env
 rclone-config/
-data/
 audio/
 logs/
-analyzer-cache/
 results/
+analyzer-cache/
