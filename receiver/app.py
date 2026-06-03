@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 SIGNING_SECRET = os.environ.get("B2_WEBHOOK_SECRET", "")
-PIPELINE_SCRIPT = "/custom_scripts/daily_run.sh"
+PIPELINE_SCRIPT = "/custom_scripts/process_file.sh"
 
 def verify_signature(payload, signature):
     if not SIGNING_SECRET:
@@ -19,11 +19,11 @@ def verify_signature(payload, signature):
         payload,
         hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(f"sha256={expected}", signature)
+    return hmac.compare_digest(f"v1={expected}", signature)
 
 def run_pipeline(filename):
     print(f"Starting pipeline for {filename}")
-    subprocess.run(["bash", PIPELINE_SCRIPT], check=False)
+    subprocess.run(["bash", PIPELINE_SCRIPT, filename], check=False)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
