@@ -3,12 +3,12 @@
 import os
 import csv
 import uuid
-import hmac
-import hashlib
+import time
 import subprocess
 import psycopg2
 from pathlib import Path
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify
 import urllib.request
 import urllib.parse
@@ -22,6 +22,40 @@ RESULTS_DIR = "/results"
 CREATED_BY = "spadefoot"
 AUDIO_EXTENSIONS = ["opus", "flac", "wav", "mp3", "m4a", "ogg", "aac"]
 LABELS_FILE = "/usr/local/lib/python3.11/site-packages/birdnet_analyzer/labels/V2.4/BirdNET_GLOBAL_6K_V2.4_Labels_en_uk.txt"
+
+TZ_MAP = {
+    "EDT": "America/New_York",
+    "EST": "America/New_York",
+    "CDT": "America/Chicago",
+    "CST": "America/Chicago",
+    "MDT": "America/Denver",
+    "MST": "America/Denver",
+    "PDT": "America/Los_Angeles",
+    "PST": "America/Los_Angeles",
+    "AKDT": "America/Anchorage",
+    "AKST": "America/Anchorage",
+    "HST": "Pacific/Honolulu",
+    "HDT": "Pacific/Honolulu",
+    "ADT": "America/Halifax",
+    "AST": "America/Halifax",
+    "UTC": "UTC",
+    "GMT": "UTC",
+    "CET": "Europe/Paris",
+    "CEST": "Europe/Paris",
+    "AEST": "Australia/Sydney",
+    "AEDT": "Australia/Sydney",
+    "ACST": "Australia/Darwin",
+    "ACDT": "Australia/Adelaide",
+    "AWST": "Australia/Perth",
+    "JST": "Asia/Tokyo",
+    "IST": "Asia/Kolkata",
+    "SAST": "Africa/Johannesburg",
+    "BRT": "America/Sao_Paulo",
+    "BRST": "America/Sao_Paulo",
+    "ART": "America/Argentina/Buenos_Aires",
+    "NZST": "Pacific/Auckland",
+    "NZDT": "Pacific/Auckland",
+}
 
 # ── Load labels once at startup ───────────────────────────────────────────────
 common_to_scientific = {}
@@ -74,10 +108,17 @@ def ingest(result_file, conn, cur):
         device_name = parts[0]
         date_str = parts[1]
         time_str = parts[2]
-        rec_type = parts[3]
-        recorded_at = datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
+        tz_str = parts[3]
+        rec_type = parts[4]
     except (IndexError, ValueError) as e:
         print(f"Could not parse filename {result_file.name}: {e}")
+        return 0
+
+    tz = ZoneInfo(TZ_MAP.get(tz_str, "UTC"))
+    try:
+        recorded_at = datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S").replace(tzinfo=tz)
+    except ValueError as e:
+        print(f"Could not parse timestamp from {result_file.name}: {e}")
         return 0
 
     unit_id, LON, LAT = get_device(cur, conn, device_name)
@@ -276,7 +317,6 @@ def enrich_all(cur, conn):
     print(f"Enriching {len(rows)} new species...")
     for row in rows:
         enrich_species(cur, conn, row[0], row[1])
-        import time
         time.sleep(0.2)
     print(f"Enrichment complete.")
 
@@ -292,7 +332,6 @@ def process():
     if not object_name:
         return jsonify({"error": "filename required"}), 400
 
-    # ── Audio check ───────────────────────────────────────────────────────────
     ext = object_name.rsplit(".", 1)[-1].lower()
     if ext not in AUDIO_EXTENSIONS:
         return jsonify({"status": "skipped", "reason": "not audio"}), 200
@@ -358,11 +397,12 @@ def process():
     conn.close()
 
     print(f"Done: {relative} — {observations} observations")
-    
+
     return jsonify({
         "status": "ok",
         "file": object_name,
         "observations": observations
     }), 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
